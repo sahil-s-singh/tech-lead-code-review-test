@@ -123,3 +123,193 @@ private async getUserEmail(userId: string): Promise<{ email: string }> {
 - **Testing**: 2-3 hours
 
 ---
+
+
+## PR #2: Add Real-time Analytics Dashboard
+
+**Author:** mid-level-dev (2 years React, first time with WebSockets)
+**Branch:** feature/realtime-dashboard → main
+
+### Overall Assessment
+⚠️ **Needs Revision** - Good foundation but several issues around connection management, performance, and error handling need addressing.
+
+### Critical Issues
+
+#### 🔴 WebSocket Management Problems
+- **Line 6 (RealtimeDashboard.tsx)**: Socket connection created globally outside component - causes memory leaks
+- **Line 17**: Manual `socket.connect()` call unnecessary and can cause double connections
+- **Lines 11, 3 (useRealtimeData.ts)**: Each hook creates new socket instance - multiple connections to same server
+- **No reconnection logic**: Acknowledged known issue but critical for production
+
+#### 🔴 Memory & Performance Issues
+- **Lines 25, 34 (RealtimeDashboard.tsx)**: Unbounded array growth in `pageViews` and `recentEdits` - will cause memory leaks
+- **Line 48-54**: Chart data accumulates indefinitely without cleanup
+- **Missing cleanup**: No socket disconnection in main dashboard component
+
+#### 🔴 Error Handling & User Experience
+- **Lines 38-44**: No error handling for initial API fetch
+- **Line 21**: Console.log in production code
+- **No loading states**: Users see empty dashboard while data loads
+
+### Code Quality Feedback
+
+#### React Patterns & Best Practices
+- ✅ Good use of TypeScript interfaces in RealtimeChart component
+- ✅ Proper component separation and reusable chart component
+- ❌ Socket management violates React lifecycle patterns
+- ❌ Missing proper dependency arrays in useEffect hooks
+
+#### State Management
+- ✅ Appropriate use of useState for local component state
+- ❌ No state normalization - duplicate data across different states
+- ❌ Missing memoization for expensive operations
+
+### Architecture Concerns
+
+#### WebSocket Integration
+- ❌ Socket instances not properly managed in React lifecycle
+- ❌ No connection pooling or singleton pattern for socket management
+- ❌ Missing error boundaries for WebSocket failures
+- ❌ No graceful degradation when WebSocket unavailable
+
+#### Performance Optimization
+- Missing virtualization for large lists (recent edits)
+- No debouncing for rapid WebSocket updates
+- Chart re-renders on every data point addition
+
+### Mentoring Notes for Mid-Level Developer
+
+Great progress on your first WebSocket integration! Your component structure and TypeScript usage show solid React fundamentals. Here are key areas to focus on:
+
+#### Advanced Patterns to Learn
+1. **WebSocket Context Pattern**: Create a context provider to manage single socket instance across app
+2. **Custom Hooks**: Separate socket logic from UI logic more cleanly
+3. **Performance Optimization**: Learn about useMemo, useCallback, and React.memo
+
+#### Production Readiness Skills
+1. **Connection Management**: Implement exponential backoff for reconnections
+2. **Error Boundaries**: Handle WebSocket failures gracefully
+3. **Memory Management**: Implement data windowing for large datasets
+
+### Specific Line-by-Line Feedback
+
+#### RealtimeDashboard.tsx
+```typescript
+// Lines 6-7 - CRITICAL: Move socket to context or custom hook
+const useSocket = () => {
+  const [socket] = useState(() => io('http://localhost:3000'));
+  // Implement proper cleanup and reconnection logic
+}
+
+// Lines 25, 34 - Add data windowing to prevent memory leaks
+setPageViews(prev => [...prev.slice(-100), data]); // Keep only last 100
+setRecentEdits(prev => [edit, ...prev.slice(0, 49)]); // Keep only last 50
+
+// Lines 38-44 - Add proper error handling
+const fetchInitialData = async () => {
+  try {
+    setLoading(true);
+    const response = await fetch('/api/analytics/realtime');
+    if (!response.ok) throw new Error('Failed to fetch');
+    const data = await response.json();
+    // Set data...
+  } catch (error) {
+    setError(error.message);
+  } finally {
+    setLoading(false);
+  }
+};
+
+// Add proper cleanup
+useEffect(() => {
+  // socket setup...
+  return () => {
+    socket.disconnect();
+  };
+}, []);
+```
+
+#### useRealtimeData.ts
+```typescript
+// Lines 11-26 - Refactor to use shared socket instance
+export function useRealtimeData(endpoint: string) {
+  const socket = useSocket(); // Get from context
+
+  useEffect(() => {
+    if (!socket) return;
+
+    const handleData = (newData) => {
+      setData(newData);
+      setLoading(false);
+    };
+
+    socket.on(endpoint, handleData);
+    return () => socket.off(endpoint, handleData);
+  }, [socket, endpoint]);
+}
+```
+
+#### RealtimeChart.tsx
+```typescript
+// Line 16-20 - Optimize with memo to prevent unnecessary re-renders
+export const RealtimeChart = React.memo(({ data, title, color = '#8884d8' }: RealtimeChartProps) => {
+  const chartData = useMemo(() => data, [data]);
+
+  // Component implementation...
+});
+```
+
+### Recommended Architecture Improvements
+
+#### 1. Socket Context Provider
+```typescript
+// Create contexts/SocketContext.tsx
+const SocketContext = createContext<Socket | null>(null);
+
+export const SocketProvider = ({ children }) => {
+  const [socket] = useState(() => io('http://localhost:3000', {
+    autoConnect: false,
+  }));
+
+  useEffect(() => {
+    socket.connect();
+    return () => socket.disconnect();
+  }, []);
+
+  return (
+    <SocketContext.Provider value={socket}>
+      {children}
+    </SocketContext.Provider>
+  );
+};
+```
+
+#### 2. Data Management Hook
+```typescript
+// Create hooks/useRealtimeAnalytics.ts
+export const useRealtimeAnalytics = () => {
+  const socket = useSocket();
+  // Centralized state management with proper cleanup
+};
+```
+
+### Testing Recommendations
+1. Mock WebSocket connections for unit tests
+2. Add integration tests for connection scenarios
+3. Test memory usage with large datasets
+4. Verify reconnection logic works correctly
+
+### Next Steps
+1. Implement proper WebSocket context and cleanup
+2. Add data windowing and memory management
+3. Implement reconnection logic with exponential backoff
+4. Add comprehensive error handling and loading states
+5. Add performance optimizations (memoization, virtualization)
+
+### Estimated Effort
+- **Critical fixes**: 3-4 hours
+- **Architecture improvements**: 4-6 hours
+- **Performance optimizations**: 2-3 hours
+- **Testing**: 3-4 hours
+
+---
